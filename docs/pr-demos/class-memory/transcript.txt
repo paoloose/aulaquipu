@@ -1,0 +1,23 @@
+
+ RUN  v4.1.12 /home/cueva/projects/atomic-team-prs/aulaquipu/backend/agents/aulaquipu-tutor
+
+AulaQuipu · adaptador real de memoria
+Servidor HTTP local de prueba. Sin voz, LiveKit Cloud ni datos reales de alumnos.
+
+PRIMERA CLASE > guardar resumen sintético: Domina rectas; quiere practicar fracciones.
+API > guardado confirmado.
+-----SIGUIENTE CLASE > recuperar progreso de la misma alumna
+API > - Domina rectas; quiere practicar fracciones.
+OTRO ALUMNO > recuperar progreso
+API > sin recuerdos de la otra alumna.
+ALUMNA > olvidar el resumen que acabamos de recuperar
+API > forgotten
+NUEVA CLASE > recuperar progreso después de borrar
+API > sin registros.
+Verificado: continuidad entre clases, aislamiento y borrado confirmado.
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 5 skipped (6)
+   Start at  00:01:37
+   Duration  9.14s (transform 22ms, setup 0ms, import 39ms, tests 9.04s, environment 0ms)

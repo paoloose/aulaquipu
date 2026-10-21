@@ -92,7 +92,15 @@ ATOMICMEMORY_API_URL=https://api.atomicstrata.ai
 ATOMICMEMORY_API_KEY=your_amc_key
 ```
 
-At class start the agent recalls what the student worked on before (`memoryRecall`), and during class it saves durable progress notes (`memorySave`). Memories are scoped per student (`user` = student id) and tagged with the class session. Without the credentials, or if the API errors or takes longer than ~4 s, the agent runs normally without memory and logs a single warning (never memory content or keys). Implementation: `src/memory.ts`.
+At class start the agent recalls what the student worked on before (`memoryRecall`), and during class it saves durable progress notes (`memorySave`). If the student asks the tutor to forget something, `memoryForget` deletes that note. It can only delete a note that this class already recalled for the same student, picked by its text, and it says so when it cannot.
+
+Memories are scoped only by student: `user` is the student id that the web app puts in the dispatch metadata from the signed session. The agent does not send a `thread`. On AtomicMemory Cloud, a thread replaces the user as the memory subject ([scopes and identity](https://docs.atomicstrata.ai/sdk/concepts/scopes-and-identity)), so tagging each class's session there would file every class separately and the next class would find nothing. Shared group classes get no student id, so they don't read or write memory.
+
+Memory is off unless `ATOMICMEMORY_API_KEY` is set. Without the key, or if the API errors or takes longer than ~4 s, the agent runs normally without memory and logs a single warning (never memory content or keys). Implementation: `src/memory.ts`. `src/memory.fixture.test.ts` exercises the real SDK over HTTP against a local fixture server. That fixture is not AtomicMemory Cloud.
+
+Existing records filed under old session subjects are not migrated automatically. This change only writes and reads the student's own subject; it never scans other sessions or users to recover old notes. The memory text is labelled as untrusted context, and save/delete results are confirmed before reporting success.
+
+Local validation covers the SDK and actual HTTP adapter with synthetic students. LiveKit debugger and voice simulation remain **pending**: the CLI and LiveKit project credentials are not available in this environment. The scenario is supplied in `scenarios.yaml`; run it against a configured project before merging. No LiveKit Cloud deployment or voice success is claimed. See the repository-level `docs/pr-demos/class-memory` for an authentic terminal recording of the local adapter workflow.
 
 The [`am` CLI](https://docs.atomicstrata.ai/cli#install) reaches the same memory from a terminal:
 

@@ -9,11 +9,11 @@ import {
   groupNames,
   handleDirectorDone,
   handleQuizAnswer,
-  wrapUpClass,
   watchDelegations,
+  wrapUpClass,
 } from './agent.ts';
 import { fetchTopicImages } from './images.ts';
-import { memoryScope, recallBrief, remember } from './memory.ts';
+import { forget, memoryScope, recallBrief, remember } from './memory.ts';
 import { SpeakerSwitcher, speakerNote } from './speakers.ts';
 
 dotenv.config({ path: '.env.local' });
@@ -47,7 +47,10 @@ function classContextFrom(metadata: string | undefined): ClassContext {
       // Clase compartida (hasta 5): ids y nombres, con topes defensivos
       students: Array.isArray(raw.students)
         ? raw.students
-            .filter((s): s is { id: string; name: string } => !!s && typeof s.id === 'string' && typeof s.name === 'string')
+            .filter(
+              (s): s is { id: string; name: string } =>
+                !!s && typeof s.id === 'string' && typeof s.name === 'string',
+            )
             .slice(0, 5)
             .map((s) => ({ id: s.id.slice(0, 64), name: s.name.trim().slice(0, 40) }))
             .filter((s) => s.name)
@@ -55,7 +58,16 @@ function classContextFrom(metadata: string | undefined): ClassContext {
       detail: typeof raw.detail === 'string' ? raw.detail.trim().slice(0, 280) : '',
     };
   } catch {
-    return { tutorName: 'Quipu', style: '', focus: '', topic: '', studentName: '', guide: '', studentId: '', topicId: '' };
+    return {
+      tutorName: 'Quipu',
+      style: '',
+      focus: '',
+      topic: '',
+      studentName: '',
+      guide: '',
+      studentId: '',
+      topicId: '',
+    };
   }
 }
 
@@ -72,7 +84,12 @@ export default defineAgent({
     // Última vez que algo apareció en pantalla (herramienta del agente o acción del director):
     // así el vigilante de delegaciones no avisa "no se ejecutó" de algo que sí salió
     let lastScreenAction = 0;
-    const SCREEN_TOPICS = new Set(['aulaquipu:graph', 'aulaquipu:doc', 'aulaquipu:quiz', 'aulaquipu:action']);
+    const SCREEN_TOPICS = new Set([
+      'aulaquipu:graph',
+      'aulaquipu:doc',
+      'aulaquipu:quiz',
+      'aulaquipu:action',
+    ]);
     const publish = async (msg: Record<string, unknown>, topic: string) => {
       const local = ctx.room.localParticipant;
       // Falla en voz alta: si no sale, la herramienta debe devolver ERROR y no un falso "OK"
@@ -116,12 +133,15 @@ export default defineAgent({
 
     const session = new voice.AgentSession({});
 
-    const scope = memoryScope(klass.studentId, sessionId ?? '');
+    const group = groupNames(klass);
+    // Una clase compartida no debe consultar ni modificar la memoria privada del anfitrión.
+    const scope = memoryScope(klass.studentId, sessionId ?? '', Boolean(group));
     const hooks = {
       publish,
       logEvent,
       remember: (content: string) => remember(scope, content),
       recall: (query: string) => recallBrief(scope, query),
+      forget: (content: string) => forget(scope, content),
       // Aviso del agente al tutor de voz (p. ej. la imagen que se buscaba en segundo plano no apareció)
       tell: (instructions: string) => {
         try {
@@ -130,7 +150,8 @@ export default defineAgent({
           console.warn('no se pudo avisar al tutor', err);
         }
       },
-      topicImages: () => fetchTopicImages({ url: SUPABASE_URL, key: SUPABASE_SECRET_KEY }, klass.topicId),
+      topicImages: () =>
+        fetchTopicImages({ url: SUPABASE_URL, key: SUPABASE_SECRET_KEY }, klass.topicId),
     };
     const memoryBrief = await hooks.recall(
       klass.topic
@@ -144,7 +165,7 @@ export default defineAgent({
 
     // Clase compartida: el agente escucha a una persona a la vez. Se pasa a quien está hablando
     // (cuando quien se escuchaba ya calló) y se le dice al modelo su nombre para que le responda.
-    const group = groupNames(klass);
+
     let speakerName = klass.studentName;
     const listenTo = async (identity: string, name: string) => {
       const io = session._roomIO;
@@ -158,7 +179,10 @@ export default defineAgent({
           speakerNote(speakerName),
         );
       } catch (err) {
-        console.warn('[tutor] no se pudo avisar quién habla', err instanceof Error ? err.message : err);
+        console.warn(
+          '[tutor] no se pudo avisar quién habla',
+          err instanceof Error ? err.message : err,
+        );
       }
     };
     if (group) {
@@ -180,9 +204,16 @@ export default defineAgent({
       ctx.addShutdownCallback(async () => switcher.dispose());
       // Si se va la persona que se escuchaba, se pasa a otro alumno que siga en la sala
       ctx.room.on(RoomEvent.ParticipantDisconnected, (gone) => {
-        if (session._roomIO?.linkedParticipant && session._roomIO.linkedParticipant.identity !== gone.identity) return;
+        if (
+          session._roomIO?.linkedParticipant &&
+          session._roomIO.linkedParticipant.identity !== gone.identity
+        )
+          return;
         const next = [...ctx.room.remoteParticipants.values()].find(
-          (p) => p.identity !== gone.identity && p.kind !== ParticipantKind.AGENT && p.identity.startsWith('profile:'),
+          (p) =>
+            p.identity !== gone.identity &&
+            p.kind !== ParticipantKind.AGENT &&
+            p.identity.startsWith('profile:'),
         );
         if (next) void listenTo(next.identity, next.name || '');
       });
@@ -190,7 +221,11 @@ export default defineAgent({
 
     // Si el modelo de respaldo termina sin llamar herramientas, se registra y el tutor lo dice
     try {
-      watchDelegations(agent.duplexSession as unknown as Parameters<typeof watchDelegations>[0], hooks, () => lastScreenAction);
+      watchDelegations(
+        agent.duplexSession as unknown as Parameters<typeof watchDelegations>[0],
+        hooks,
+        () => lastScreenAction,
+      );
     } catch (err) {
       console.warn('no se pudo vigilar la delegación', err);
     }
@@ -200,7 +235,8 @@ export default defineAgent({
     session.on(voice.AgentSessionEventTypes.ConversationItemAdded, (ev) => {
       const item = ev.item;
       if (item.type !== 'message' || !item.textContent) return;
-      const who = item.role === 'user' ? (group ? speakerName || 'Alumno' : 'Alumno') : klass.tutorName;
+      const who =
+        item.role === 'user' ? (group ? speakerName || 'Alumno' : 'Alumno') : klass.tutorName;
       transcript.push(`${who}: ${item.textContent.slice(0, 400)}`);
       if (transcript.length > 80) transcript.shift();
     });
@@ -247,13 +283,15 @@ export default defineAgent({
         if (typeof msg.id !== 'string' || typeof msg.index !== 'number') return;
         // Quién respondió: cada alumno tiene su propio intento y su propio veredicto
         const who = { identity: participant.identity, name: participant.name || '' };
-        void handleQuizAnswer(hooks, quizzes, { id: msg.id, index: msg.index, who }).then((prompt) => {
-          if (!prompt) return;
-          // Clase compartida: las respuestas que llegan juntas se comentan en una sola intervención
-          // (una por alumno hacía esperar y se pisaban)
-          if (group) return queueQuizReaction(prompt);
-          session.generateReply({ instructions: prompt });
-        });
+        void handleQuizAnswer(hooks, quizzes, { id: msg.id, index: msg.index, who }).then(
+          (prompt) => {
+            if (!prompt) return;
+            // Clase compartida: las respuestas que llegan juntas se comentan en una sola intervención
+            // (una por alumno hacía esperar y se pisaban)
+            if (group) return queueQuizReaction(prompt);
+            session.generateReply({ instructions: prompt });
+          },
+        );
       } else if (topic === 'aulaquipu:control' && msg.type === 'director_done') {
         // La web ya graficó / preguntó / mostró algo: el tutor lo confirma sin inventar nada
         const prompt = handleDirectorDone(msg as { type?: unknown; summary?: unknown });
@@ -274,13 +312,17 @@ export default defineAgent({
     await ctx.connect();
     await logEvent('join', { name: klass.tutorName, guide: !!klass.guide });
 
-    const who = group ? ` a ${group}` : klass.studentName ? ` a ${klass.studentName}` : ' al alumno';
+    const who = group
+      ? ` a ${group}`
+      : klass.studentName
+        ? ` a ${klass.studentName}`
+        : ' al alumno';
     session.generateReply({
       instructions: group
         ? `Saluda como ${klass.tutorName}${who}, por sus nombres. Di que hoy trabajarán ${klass.topic || 'el tema que eligieron'} juntos y haz tu primera pregunta de diagnóstico a uno de ellos por su nombre. Sé breve y cercano.`
         : klass.topic
-        ? `Saluda como ${klass.tutorName}${who}, di que hoy trabajarán ${klass.topic} y haz tu primera pregunta de diagnóstico. Sé breve y cercano.`
-        : `Saluda como ${klass.tutorName}${who} y pregunta qué tema quiere trabajar hoy. Sé breve y cercano.`,
+          ? `Saluda como ${klass.tutorName}${who}, di que hoy trabajarán ${klass.topic} y haz tu primera pregunta de diagnóstico. Sé breve y cercano.`
+          : `Saluda como ${klass.tutorName}${who} y pregunta qué tema quiere trabajar hoy. Sé breve y cercano.`,
     });
   },
 });
